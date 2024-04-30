@@ -181,18 +181,15 @@ class D4100Server(Server32):
         self.wait=wait
 
     def set_all_mirrors(self,devnum,val):
-        self.set_tpe_enable(devnum,0)
-        blocks = 2
+        self.set_tpg_enable(devnum,0)
+        self.clear_fifos(devnum)
+        self.global_reset(devnum)
+        self.set_row_address(devnum,0)
+        blocks = 4
         block_size = self.rows//blocks
         current_row = 0
         row = [val for x in range(block_size*self.cols)]
         # load rows
-        self.clear_fifos(devnum)
-        self.global_reset(devnum)
-        self.set_block_mode(devnum,0)
-        self.set_ns_flip(devnum,0)
-        self.set_row_mode(devnum,0b10)
-        self.set_row_address(devnum,current_row)
         self.set_row_mode(devnum,0b01)
         for i in range(blocks):
             # current_row += block_size
@@ -203,14 +200,31 @@ class D4100Server(Server32):
             # sleep(1)
         self.global_reset(devnum)    
 
+    def _set_image(self,devnum,im_list):
+        self.set_tpg_enable(devnum,0)
+        self.clear_fifos(devnum)
+        self.global_reset(devnum)
+        blocks = 15
+        block_size = self.rows//blocks
+        blkadd = 0b0000
+        # load rows
+        for i in range(blocks):
+            self.set_row_mode(devnum,0b01)
+            data = im_list[i*block_size*self.cols:block_size*(i+1)*self.cols]
+            self.load_data(devnum,data)
+            self.set_row_mode(devnum,0b00)
+            self.set_block_mode(devnum,0b10)
+            self.set_block_address(devnum,blkadd)
+            blkadd = blkadd + 0b0001
+            self.load_control(devnum)
+        #self.global_reset(devnum)    
+
+
     def all_mirrors_off(self,devnum):
         self.set_all_mirrors(devnum,0)
 
     def all_mirrors_on(self,devnum):
         self.set_all_mirrors(devnum,255)
-
-    # def vertical_bars(self,devnum):
-    #     data = 
 
     # int LoadData(UCHAR* RowData, unsigned int length, short DMDType, short DeviceNumber)
     def load_data(self,devnum,data):
@@ -233,11 +247,26 @@ class D4100Server(Server32):
     # short GetNSFLIP(short DeviceNumber)
     def get_ns_flip(self,devnum):
         return self.lib.GetNSFLIP(devnum)
-
+    
+    # short GetRST2BLKZ(short DeviceNumber)
+    def get_rst2blkz(self,devnum):
+        return self.lib.GetRST2BLKZ(devnum)
+    
+    # short SetRST2BLKZ(short value, short DeviceNumber)
+    def set_rst2blkz(self,devnum, val):
+        return self.lib.SetRST2BLKZ(val,devnum)
+    
+    # short GetLoad4(short DeviceNumber)
+    def get_load4(self,devnum):
+        return self.lib.GetLoad4(devnum)
+    
+    # short SetLoad4(short value, short DeviceNumber)
+    def set_load4(self,devnum, val):
+        return self.lib.SetLoad4(val,devnum)
+    
 # int program_FPGA(UCHAR* write_buffer, long write_size, short int DeviceNumber)
 # int GetDescriptor(int*, short DeviceNum)
-# short SetRST2BLKZ(short value, short DeviceNumber)
-# short GetRST2BLKZ(short DeviceNumber)
+
 # short SetCOMPDATA(short value, short DeviceNumber)
 # short GetCOMPDATA(short DeviceNumber)
 # short SetWDT(short value, short DeviceNumber)
@@ -250,6 +279,5 @@ class D4100Server(Server32):
 # short SetSWOverrideEnable(short value, short DeviceNumber)
 # short GetSWOverrideValue(short DeviceNumber)
 # short SetSWOverrideValue(short value, short DeviceNumber)
-# short GetLoad4(short DeviceNumber)
-# short SetLoad4(short value, short DeviceNumber)
+
 
