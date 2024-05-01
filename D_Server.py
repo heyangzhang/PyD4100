@@ -1,4 +1,5 @@
 import ctypes
+import sys
 from msl.loadlib import Server32
 from time import sleep
 
@@ -12,7 +13,6 @@ class D4100Server(Server32):
         self.lib.GetFPGARev.restype = ctypes.c_uint
         self.rows = 1080
         self.cols = 1920
-        self.wait = 0.005
 
     @staticmethod
     def _split_bytes(rev):
@@ -170,71 +170,61 @@ class D4100Server(Server32):
         self.set_block_mode(devnum,0b11)
         self.set_block_address(devnum,0b1000)
         self.load_control(devnum)
-        self.set_block_mode(devnum,0b00)
         self.load_control(devnum)
         self.load_control(devnum)
-
-    def _generate_array(self, inital_val=0):
-        return  [[inital_val for x in range(self.cols)] for x in range(self.rows)] 
-
-    def set_wait(self,wait):
-        self.wait=wait
 
     def set_all_mirrors(self,devnum,val):
-        self.set_tpg_enable(devnum,0)
-        self.clear_fifos(devnum)
-        self.global_reset(devnum)
-        self.set_row_address(devnum,0)
-        blocks = 4
-        block_size = self.rows//blocks
-        current_row = 0
-        row = [val for x in range(block_size*self.cols)]
-        # load rows
-        self.set_row_mode(devnum,0b01)
-        for i in range(blocks):
-            # current_row += block_size
-            print(self.load_data(devnum,row))
-            # self.set_row_address(devnum, current_row)
-            # sleep(self.wait)
-            # print(self.get_row_address(devnum))
-            # sleep(1)
-        self.global_reset(devnum)    
+        data_size = self.rows*self.cols
+        image = [val for x in range(data_size)]
+        self._set_image(devnum,image)
 
     def _set_image(self,devnum,im_list):
         self.set_tpg_enable(devnum,0)
         self.clear_fifos(devnum)
-        self.global_reset(devnum)
+        self.set_row_mode(devnum,0b01)
         blocks = 15
-        block_size = self.rows//blocks
-        blkadd = 0b0000
+        block_size = self.cols*self.rows//blocks
         # load rows
         for i in range(blocks):
-            self.set_row_mode(devnum,0b01)
-            data = im_list[i*block_size*self.cols:block_size*(i+1)*self.cols]
-            self.load_data(devnum,data)
-            self.set_row_mode(devnum,0b00)
-            self.set_block_mode(devnum,0b10)
-            self.set_block_address(devnum,blkadd)
-            blkadd = blkadd + 0b0001
-            self.load_control(devnum)
-        #self.global_reset(devnum)    
-
+            data = im_list[i*block_size:(i+1)*block_size]
+            if self.load_data(devnum,data) == 0 or len(data) != block_size:
+                raise Exception("didn't load")
+        self.global_reset(devnum)
+        self.set_row_mode(devnum,0b11)
+ 
 
     def all_mirrors_off(self,devnum):
-        self.set_all_mirrors(devnum,0)
+        if self.set_all_mirrors(devnum,0) == 0:
+            raise Exception("didn't load")
 
     def all_mirrors_on(self,devnum):
-        self.set_all_mirrors(devnum,255)
+        if self.set_all_mirrors(devnum,255) == 0:
+            raise Exception("didn't load")
 
     # int LoadData(UCHAR* RowData, unsigned int length, short DMDType, short DeviceNumber)
+    # takes in a python list and converts it to ctype for the dmd
+    '''
+    However, the note about length is still correct. 
+    This is the length in bytes of the data in RowData.
+    If you are only putting the length as the length of one row in pixels (i.e. 1920), then it will load 8 rows.
+    If there are only 1920 bits (240 bytes) in the data, then it will not work, because it will run out of bytes in RowData and return an error.
+    Try 240 instead of 1920 if you are only loading 1 row of data.  I have verified this is the length in bytes, NOT bits.  
+
+    The DLPC410 is only a binary controller.  Each pattern must be 1-bit per pixel.  
+    The controller does not do any gray-scale values, so that it is 240 bytes = 1920 bits for one row.'''
     def load_data(self,devnum,data):
         dmd_type = self.get_dmd_type(devnum)
         dlen = len(data)
-        b_data = (ctypes.c_ubyte * dlen)()
-        for i,val in enumerate(data):
-            b_data[i] = val
-        # print(b_data[:8],len(b_data))
-        return self.lib.LoadData(ctypes.byref(b_data),dlen,dmd_type,devnum)
+        dlen = dlen//8
+        binary_data = [i>10 for i in data]
+        data_list = []
+        binary_convert = [1,2,4,8,16,32,64,128]
+        for i in range(dlen):
+            list8 = binary_data[i*8:(i+1)*8]
+            res = [a*b for a,b in zip(binary_convert,list8)]
+            data_list.append(sum(res))
+        b_data = (ctypes.c_ubyte * dlen)(*data_list)
+        return self.lib.LoadData(ctypes.pointer(b_data),dlen,dmd_type,devnum)
     
     # short ClearFifos(short DeviceNumber)
     def clear_fifos(self,devnum):

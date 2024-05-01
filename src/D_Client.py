@@ -2,7 +2,7 @@ from msl.loadlib import Client64
 
 class D4100Client(Client64):
     def __init__(self):
-        super().__init__(module32='D_Server.py', quiet=False)
+        super().__init__(module32='D_Server.py')
 
     def __getattr__(self, method32):
         def send(*args, **kwargs):
