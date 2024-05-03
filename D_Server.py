@@ -141,15 +141,15 @@ class D4100Server(Server32):
     # short LoadControl(short DeviceNumber)
     def load_control(self,devnum):
         return self.lib.LoadControl(devnum)
-
+    
+    def wait(self):
+        sleep(0.001)
 
     def float_mirrors(self,devnum):
         self.set_row_mode(devnum,0b00)
         self.set_block_mode(devnum,0b11)
         self.set_block_address(devnum,0b1100)
-        self.load_control(devnum)
-        self.load_control(devnum)
-        self.load_control(devnum)
+        self.load3(devnum)
 
     def global_reset(self,devnum):
         """
@@ -161,17 +161,15 @@ class D4100Server(Server32):
         you may also need to set RST2BLKZ if using dual block [§ 6.2.8]
         and then calling Load Control [§ 6.2.1] to write these values to the DMD.
         I have found in practice that calling Load Control three times consecutively ensures that it writes over the USB interface. 
-
-        
         Arguments:
             devnum {[type]} -- [description]
         """
         self.set_row_mode(devnum,0b00)
+        self.wait()
         self.set_block_mode(devnum,0b11)
+        self.wait()
         self.set_block_address(devnum,0b1000)
-        self.load_control(devnum)
-        self.load_control(devnum)
-        self.load_control(devnum)
+        self.load3(devnum)
 
     def set_all_mirrors(self,devnum,val):
         data_size = self.rows*self.cols
@@ -181,18 +179,41 @@ class D4100Server(Server32):
     def _set_image(self,devnum,im_list):
         self.set_tpg_enable(devnum,0)
         self.clear_fifos(devnum)
-        self.set_row_mode(devnum,0b01)
-        blocks = 15
-        block_size = self.cols*self.rows//blocks
-        # load rows
-        for i in range(blocks):
-            data = im_list[i*block_size:(i+1)*block_size]
-            if self.load_data(devnum,data) == 0 or len(data) != block_size:
-                raise Exception("didn't load")
-        self.global_reset(devnum)
         self.set_row_mode(devnum,0b11)
- 
+        self.set_row_address(devnum,0)
+        self.load3(devnum)
+        blocks = 3
+        block_size = (self.cols*self.rows)//blocks
+        # load rows
+        block_size_track = 0
+        for i in range(blocks):
+            self.set_row_mode(devnum,0b01)
+            self.load3(devnum)
+            data = im_list[i*block_size:(i+1)*block_size]
+            if self.load_data(devnum,data) == 0:
+                raise Exception("didn't load")
+            self.wait()
+            block_size_track += len(data)
 
+        if block_size_track != self.cols*self.rows:
+            raise Exception(f"data size wrong {self.cols*self.rows} is not {block_size_track}")
+        self.global_reset(devnum)
+
+        self.clear_fifos(devnum)
+        self.set_block_mode(devnum,0b00)
+        self.set_row_address(devnum,0b000000000000)
+        self.load3(devnum)
+
+    
+    def load3(self,devnum):
+        self.wait()
+        self.load_control(devnum)
+        self.wait()
+        self.load_control(devnum)
+        self.wait()
+        self.load_control(devnum)
+        self.wait()
+ 
     def all_mirrors_off(self,devnum):
         if self.set_all_mirrors(devnum,0) == 0:
             raise Exception("didn't load")
