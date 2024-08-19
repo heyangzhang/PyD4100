@@ -12,7 +12,8 @@ class D4100Server(Server32):
         super(D4100Server, self).__init__(path, 'cdll', host, port)
         self.lib.GetFPGARev.restype = ctypes.c_uint
         self.rows = 1080
-        self.cols = 1920
+        #self.cols = 1920
+        self.cols = 2048
 
     @staticmethod
     def _split_bytes(rev):
@@ -21,6 +22,9 @@ class D4100Server(Server32):
     @staticmethod
     def _split_wbytes(rev):
         return (rev&0xFFFF0000)>>16,rev&0x0000FFFF
+    
+    def program_FPGA(self, fpga, size, devnum):
+        return self.lib.program_FPGA(fpga,size,devnum)
 
     # short GetNumDev( )
     def get_num_dev(self):
@@ -145,6 +149,15 @@ class D4100Server(Server32):
     def wait(self):
         sleep(0.001)
 
+    def load3(self,devnum):
+        self.wait()
+        self.load_control(devnum)
+        self.wait()
+        self.load_control(devnum)
+        self.wait()
+        self.load_control(devnum)
+        self.wait()
+
     def float_mirrors(self,devnum):
         self.set_row_mode(devnum,0b00)
         self.set_block_mode(devnum,0b11)
@@ -171,82 +184,6 @@ class D4100Server(Server32):
         self.set_block_address(devnum,0b1000)
         self.load3(devnum)
 
-    def set_all_mirrors(self,devnum,val):
-        data_size = self.rows*self.cols
-        image = [val for x in range(data_size)]
-        self._set_image(devnum,image)
-
-    def _set_image(self,devnum,im_list):
-        self.set_tpg_enable(devnum,0)
-        self.clear_fifos(devnum)
-        self.set_row_mode(devnum,0b11)
-        self.set_row_address(devnum,0)
-        self.load3(devnum)
-        blocks = 3
-        block_size = (self.cols*self.rows)//blocks
-        # load rows
-        block_size_track = 0
-        for i in range(blocks):
-            self.set_row_mode(devnum,0b01)
-            self.load3(devnum)
-            data = im_list[i*block_size:(i+1)*block_size]
-            if self.load_data(devnum,data) == 0:
-                raise Exception("didn't load")
-            self.wait()
-            block_size_track += len(data)
-
-        if block_size_track != self.cols*self.rows:
-            raise Exception(f"data size wrong {self.cols*self.rows} is not {block_size_track}")
-        self.global_reset(devnum)
-
-        self.clear_fifos(devnum)
-        self.set_block_mode(devnum,0b00)
-        self.set_row_address(devnum,0b000000000000)
-        self.load3(devnum)
-
-    
-    def load3(self,devnum):
-        self.wait()
-        self.load_control(devnum)
-        self.wait()
-        self.load_control(devnum)
-        self.wait()
-        self.load_control(devnum)
-        self.wait()
- 
-    def all_mirrors_off(self,devnum):
-        if self.set_all_mirrors(devnum,0) == 0:
-            raise Exception("didn't load")
-
-    def all_mirrors_on(self,devnum):
-        if self.set_all_mirrors(devnum,255) == 0:
-            raise Exception("didn't load")
-
-    # int LoadData(UCHAR* RowData, unsigned int length, short DMDType, short DeviceNumber)
-    # takes in a python list and converts it to ctype for the dmd
-    '''
-    However, the note about length is still correct. 
-    This is the length in bytes of the data in RowData.
-    If you are only putting the length as the length of one row in pixels (i.e. 1920), then it will load 8 rows.
-    If there are only 1920 bits (240 bytes) in the data, then it will not work, because it will run out of bytes in RowData and return an error.
-    Try 240 instead of 1920 if you are only loading 1 row of data.  I have verified this is the length in bytes, NOT bits.  
-
-    The DLPC410 is only a binary controller.  Each pattern must be 1-bit per pixel.  
-    The controller does not do any gray-scale values, so that it is 240 bytes = 1920 bits for one row.'''
-    def load_data(self,devnum,data):
-        dmd_type = self.get_dmd_type(devnum)
-        dlen = len(data)
-        dlen = dlen//8
-        binary_data = [i>10 for i in data]
-        data_list = []
-        binary_convert = [1,2,4,8,16,32,64,128]
-        for i in range(dlen):
-            list8 = binary_data[i*8:(i+1)*8]
-            res = [a*b for a,b in zip(binary_convert,list8)]
-            data_list.append(sum(res))
-        b_data = (ctypes.c_ubyte * dlen)(*data_list)
-        return self.lib.LoadData(ctypes.pointer(b_data),dlen,dmd_type,devnum)
-    
     # short ClearFifos(short DeviceNumber)
     def clear_fifos(self,devnum):
         return self.lib.ClearFifos(devnum)
@@ -275,13 +212,22 @@ class D4100Server(Server32):
     def set_load4(self,devnum, val):
         return self.lib.SetLoad4(val,devnum)
     
-# int program_FPGA(UCHAR* write_buffer, long write_size, short int DeviceNumber)
+    # int RegisterWrite(unsigned short regAddress, unsigned short data, short devNumber);
+    def register_write(self, regAddress, data, devnum):
+        return self.lib.RegisterWrite(regAddress, data, devnum)
+    
+    def register_read(self, regAddress, devnum):
+        return self.lib.RegisterRead(regAddress, devnum)
+    
 # int GetDescriptor(int*, short DeviceNum)
-
 # short SetCOMPDATA(short value, short DeviceNumber)
 # short GetCOMPDATA(short DeviceNumber)
 # short SetWDT(short value, short DeviceNumber)
+    def set_WDT(self,devnum, val):
+        return self.lib.SetWDT(val,devnum)
 # short GetWDT(short DeviceNumber)
+    def get_WDT(self,devnum):
+        return self.lib.SetWDT(devnum)
 # short SetEXTRESETENBL(short value, short DeviceNumber)
 # short GetEXTRESETENBL(short DeviceNumber)
 # short GetRESETCOMPLETE(int waittime, short int DeviceNumber)
@@ -291,4 +237,123 @@ class D4100Server(Server32):
 # short GetSWOverrideValue(short DeviceNumber)
 # short SetSWOverrideValue(short value, short DeviceNumber)
 
+    def _load_single_wrapper(self,devnum,image):
+        if self.register_write(39,0,0)==0:
+            raise Exception("didn't set one images")
+        self.wait()
+        blocks = 15
+        block_size = (self.cols*self.rows)//blocks
+        # load rows
+        #block_size_track = 0
+        #self.set_row_mode(devnum,0b01)
+        #self.load3(devnum)
+        '''
+        data = image[0:self.rows]
+        if self.load_data(devnum,data) == 0:
+                raise Exception("didn't load row 1")
+        self.wait()
+        data = image[self.rows:block_size]
+        if self.load_data(devnum,data) == 0:
+                raise Exception("didn't load block 1")
+        self.wait()
+        '''
+        for i in range(0, blocks):
+            data = image[i*block_size:(i+1)*block_size]
+            if self.load_data(devnum,data) == 0:
+                raise Exception("didn't load")
+            self.wait()
+            #block_size_track += len(data)
+
+    def _load_gray_wrapper(self,devnum,im_list):
+        num_ims = len(im_list)
+        images = im_list
+        if self.register_write(39,num_ims-1,0)==0:
+            raise Exception("didn't set multiple images")
+        blocks = 15
+        block_size = (self.cols*self.rows)//blocks
+        # load rows
+        #block_size_track = 0
+        for im in images:
+            #self.set_row_mode(devnum,0b11)
+            #self.set_row_address(devnum,0)
+            #self.load3(devnum)
+            #self.set_row_mode(devnum,0b01)
+            #self.load3(devnum)
+            for i in range(blocks):
+                data = im[i*block_size:(i+1)*block_size]
+                if self.load_data(devnum,data) == 0:
+                    raise Exception("didn't load")
+            #self.wait()
+                #block_size_track += len(data)
+
+        #if block_size_track != self.cols*self.rows:
+        #    raise Exception(f"data size wrong {self.cols*self.rows} is not {block_size_track}")
+
+    def set_image(self,devnum,image):
+        self.set_WDT(devnum,1)
+        self.set_tpg_enable(devnum,0)
+        self.clear_fifos(devnum)
+        #self.set_row_mode(devnum,0b11)
+        #self.set_row_address(devnum,0)
+        #self.load3(devnum)
+        self._load_single_wrapper(devnum,image)
+        #self.global_reset(devnum)
+        #self.clear_fifos(devnum)
+        #self.set_block_mode(devnum,0b00)
+        #self.set_row_address(devnum,0b000000000000)
+        #self.load3(devnum)
+    
+    def set_gray(self,devnum,im_list):
+        self.set_WDT(devnum,1)
+        self.set_tpg_enable(devnum,0)
+        self.clear_fifos(devnum)
+        #self.set_tpg_enable(devnum,0)
+        #self.clear_fifos(devnum)
+        self._load_gray_wrapper(devnum,im_list)
+        #self.global_reset(devnum)
+        #self.clear_fifos(devnum)
+        #self.set_block_mode(devnum,0b00)
+        #self.set_row_address(devnum,0b000000000000)
+        #self.load3(devnum)
+
+    def set_all_mirrors(self,devnum,val):
+        data_size = self.rows*self.cols
+        image = [val for x in range(data_size)]
+        self.set_image(devnum,image)
+
+    def all_mirrors_off(self,devnum):
+        if self.set_all_mirrors(devnum,0) == 0:
+            raise Exception("didn't load")
+
+    def all_mirrors_on(self,devnum):
+        if self.set_all_mirrors(devnum,255) == 0:
+            raise Exception("didn't load")
+
+    # int LoadData(UCHAR* RowData, unsigned int length, short DMDType, short DeviceNumber)
+    # takes in a python list and converts it to ctype for the dmd
+    '''
+    However, the note about length is still correct. 
+    This is the length in bytes of the data in RowData.
+    If you are only putting the length as the length of one row in pixels (i.e. 1920), then it will load 8 rows.
+    If there are only 1920 bits (240 bytes) in the data, then it will not work, because it will run out of bytes in RowData and return an error.
+    Try 240 instead of 1920 if you are only loading 1 row of data.  I have verified this is the length in bytes, NOT bits.  
+
+    The DLPC410 is only a binary controller.  Each pattern must be 1-bit per pixel.  
+    The controller does not do any gray-scale values, so that it is 240 bytes = 1920 bits for one row.'''
+    def load_data(self,devnum,data):
+        dmd_type = self.get_dmd_type(devnum)
+        #dmd_type = 0
+        dlen = len(data)
+        dlen = dlen//8
+        #TODO: make 10 a variable threshold
+        binary_data = [i>10 for i in data]
+        data_list = []
+        binary_convert = [1,2,4,8,16,32,64,128]
+        for i in range(dlen):
+            list8 = binary_data[i*8:(i+1)*8]
+            res = [a*b for a,b in zip(binary_convert,list8)]
+            data_list.append(sum(res))
+        b_data = (ctypes.c_ubyte * dlen)(*data_list)
+        return self.lib.LoadData(ctypes.pointer(b_data),dlen,dmd_type,devnum)
+    
 
