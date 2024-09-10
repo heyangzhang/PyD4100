@@ -12,7 +12,6 @@ class D4100Server(Server32):
         super(D4100Server, self).__init__(path, 'cdll', host, port)
         self.lib.GetFPGARev.restype = ctypes.c_uint
         self.rows = 1080
-        #self.cols = 1920
         self.cols = 2048
 
     @staticmethod
@@ -228,94 +227,28 @@ class D4100Server(Server32):
 # short GetWDT(short DeviceNumber)
     def get_WDT(self,devnum):
         return self.lib.SetWDT(devnum)
-# short SetEXTRESETENBL(short value, short DeviceNumber)
-# short GetEXTRESETENBL(short DeviceNumber)
-# short GetRESETCOMPLETE(int waittime, short int DeviceNumber)
-# short SetGPIORESETCOMPLETE(short DeviceNumber)
-# short GetSWOverrideEnable(short DeviceNumber)
-# short SetSWOverrideEnable(short value, short DeviceNumber)
-# short GetSWOverrideValue(short DeviceNumber)
-# short SetSWOverrideValue(short value, short DeviceNumber)
 
-    def _load_single_wrapper(self,devnum,image):
-        if self.register_write(39,0,0)==0:
-            raise Exception("didn't set one images")
+    def _load_wrapper(self,devnum,image,num_ims = 0):
+        if self.register_write(39,num_ims,0)==0:
+            raise Exception("didn't set image count")
         self.wait()
-        blocks = 15
-        block_size = (self.cols*self.rows)//blocks
-        # load rows
-        #block_size_track = 0
-        #self.set_row_mode(devnum,0b01)
-        #self.load3(devnum)
-        '''
-        data = image[0:self.rows]
-        if self.load_data(devnum,data) == 0:
-                raise Exception("didn't load row 1")
-        self.wait()
-        data = image[self.rows:block_size]
-        if self.load_data(devnum,data) == 0:
-                raise Exception("didn't load block 1")
-        self.wait()
-        '''
+        blocks = 15*(num_ims+1)
+        block_size = (num_ims+1)*(self.cols*self.rows)//(blocks)
         for i in range(0, blocks):
             data = image[i*block_size:(i+1)*block_size]
             if self.load_data(devnum,data) == 0:
                 raise Exception("didn't load")
             self.wait()
-            #block_size_track += len(data)
-
-    def _load_gray_wrapper(self,devnum,im_list):
-        num_ims = len(im_list)
-        images = im_list
-        if self.register_write(39,num_ims-1,0)==0:
-            raise Exception("didn't set multiple images")
-        blocks = 15
-        block_size = (self.cols*self.rows)//blocks
-        # load rows
-        #block_size_track = 0
-        for im in images:
-            #self.set_row_mode(devnum,0b11)
-            #self.set_row_address(devnum,0)
-            #self.load3(devnum)
-            #self.set_row_mode(devnum,0b01)
-            #self.load3(devnum)
-            for i in range(blocks):
-                data = im[i*block_size:(i+1)*block_size]
-                if self.load_data(devnum,data) == 0:
-                    raise Exception("didn't load")
-            #self.wait()
-                #block_size_track += len(data)
 
         #if block_size_track != self.cols*self.rows:
         #    raise Exception(f"data size wrong {self.cols*self.rows} is not {block_size_track}")
 
-    def set_image(self,devnum,image):
+    def set_image(self, devnum, image, num_ims = 0):
         self.set_WDT(devnum,1)
         self.set_tpg_enable(devnum,0)
         self.clear_fifos(devnum)
-        #self.set_row_mode(devnum,0b11)
-        #self.set_row_address(devnum,0)
-        #self.load3(devnum)
-        self._load_single_wrapper(devnum,image)
-        #self.global_reset(devnum)
-        #self.clear_fifos(devnum)
-        #self.set_block_mode(devnum,0b00)
-        #self.set_row_address(devnum,0b000000000000)
-        #self.load3(devnum)
+        self._load_wrapper(devnum,image,num_ims)
     
-    def set_gray(self,devnum,im_list):
-        self.set_WDT(devnum,1)
-        self.set_tpg_enable(devnum,0)
-        self.clear_fifos(devnum)
-        #self.set_tpg_enable(devnum,0)
-        #self.clear_fifos(devnum)
-        self._load_gray_wrapper(devnum,im_list)
-        #self.global_reset(devnum)
-        #self.clear_fifos(devnum)
-        #self.set_block_mode(devnum,0b00)
-        #self.set_row_address(devnum,0b000000000000)
-        #self.load3(devnum)
-
     def set_all_mirrors(self,devnum,val):
         data_size = self.rows*self.cols
         image = [val for x in range(data_size)]
@@ -342,11 +275,10 @@ class D4100Server(Server32):
     The controller does not do any gray-scale values, so that it is 240 bytes = 1920 bits for one row.'''
     def load_data(self,devnum,data):
         dmd_type = self.get_dmd_type(devnum)
-        #dmd_type = 0
         dlen = len(data)
         dlen = dlen//8
         #TODO: make 10 a variable threshold
-        binary_data = [i>10 for i in data]
+        binary_data = [i>0 for i in data]
         data_list = []
         binary_convert = [1,2,4,8,16,32,64,128]
         for i in range(dlen):
@@ -356,4 +288,68 @@ class D4100Server(Server32):
         b_data = (ctypes.c_ubyte * dlen)(*data_list)
         return self.lib.LoadData(ctypes.pointer(b_data),dlen,dmd_type,devnum)
     
+    
+    '''
+    def set_gray(self,devnum,im_list):
+        self.set_WDT(devnum,1)
+        self.set_tpg_enable(devnum,0)
+        self.clear_fifos(devnum)
+        self._load_gray_wrapper(devnum,im_list)
 
+
+    def _set_image(self,devnum,im_list):
+
+        blocks = 15
+        block_size = (1920*self.rows)//blocks
+
+        self.set_tpg_enable(devnum,0)
+        self.clear_fifos(devnum)
+
+        self.set_row_mode(devnum,0b11)
+        self.load3(devnum)
+        data = im_list[0:1920]
+        if self.load_data(devnum,data) == 0:
+                raise Exception("didn't load row 1")
+        self.wait()
+        self.set_row_mode(devnum,0b01)
+        self.load3(devnum)
+        data = im_list[1920:block_size]
+        if self.load_data(devnum,data) == 0:
+                raise Exception("didn't load block 1")
+        self.wait()
+        # load rows
+        for i in range(1,blocks):
+            data = im_list[i*block_size:(i+1)*block_size]
+            if self.load_data(devnum,data) == 0:
+                raise Exception("didn't load")
+            self.wait()
+        self.global_reset(devnum)
+
+        self.clear_fifos(devnum)
+        self.set_block_mode(devnum,0b00)
+        self.set_row_mode(devnum,0b00)
+        self.load3(devnum)
+
+    def _load_gray_wrapper(self,devnum,im_list):
+        num_ims = len(im_list)
+        images = im_list
+        if self.register_write(39,num_ims-1,0)==0:
+            raise Exception("didn't set multiple images")
+        blocks = 2
+        block_size = (self.cols*self.rows)//blocks
+        for im in images:
+            for i in range(blocks):
+                data = im[i*block_size:(i+1)*block_size]
+                if self.load_data(devnum,data) == 0:
+                    raise Exception("didn't load")
+                self.wait()
+    '''
+
+    # short SetEXTRESETENBL(short value, short DeviceNumber)
+# short GetEXTRESETENBL(short DeviceNumber)
+# short GetRESETCOMPLETE(int waittime, short int DeviceNumber)
+# short SetGPIORESETCOMPLETE(short DeviceNumber)
+# short GetSWOverrideEnable(short DeviceNumber)
+# short SetSWOverrideEnable(short value, short DeviceNumber)
+# short GetSWOverrideValue(short DeviceNumber)
+# short SetSWOverrideValue(short value, short DeviceNumber)
